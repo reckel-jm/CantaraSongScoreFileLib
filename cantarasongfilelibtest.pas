@@ -35,6 +35,10 @@ begin
     'Property lang not correct. It is: ' + CantaraSongScoreFile.Properties.KeyData['lang'],
        CantaraSongScoreFile.Properties.KeyData['lang'] = 'de'
     );
+  WriteLn(CantaraSongScoreFile.SongPartArray[0].SongPartName, CantaraSongScoreFile.SongContentArray[0].ContentPartName);
+  WriteLn(CantaraSongScoreFile.PartContentMatrix[0][0]);
+  WriteLn(CantaraSongScoreFile.PartContentMatrix[1][0]);
+  WriteLn(CantaraSongScoreFile.PartContentMatrix[2][0]);
   CantaraSongScoreFile.Destroy;
 end;
 

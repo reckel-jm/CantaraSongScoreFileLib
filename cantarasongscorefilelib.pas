@@ -11,9 +11,9 @@ type
 
   TStringStringDictionary = specialize TFPGMap<String, String>;
 
-  TCantaraSongScoreFileImportErrorType = (Syntax, Incomplete, Double);
+  TCantaraSongScoreFileImportErrorType = (etSyntax, etIncomplete, etDouble);
 
-  { A possibel Tpye of a part of a song }
+  { A possible Type of a part of a song }
   TCantaraSongPartType = (sptChorus, sptVerse, sptBridge);
   TCantaraSongContentType = (sctScore, sctChords, sctLyrics, sctLyricsDescription);
 
@@ -44,13 +44,18 @@ type
   TCantaraSongScoreFile = class(TObject)
     private
       InputFile: TStringList;
-      SongPartArray: array of TCantaraSongPartHeader;
-      ContentPartArray: array of TCantaraSongContentHeader;
+      Errors: array of TCantaraSongScoreFileImportError;
+      ParsingLine: Integer;
       procedure ParseInputFile;
     public
       Properties: TStringStringDictionary;
+      SongPartArray: array of TCantaraSongPartHeader;
+      SongContentArray: array of TCantaraSongContentHeader;
+      PartContentMatrix: array of array of String;
       procedure AddContent(ContentAddress: String; Content: String);
       function FindPartIndex(ACantaraSongPart: TCantaraSongPartHeader): Integer;
+      function FindContentIndex(AContentHeader: TCantaraSongContentHeader): Integer;
+      function FindHighestNumerForPartType(ASongPartType: TCantaraSongPartType): Integer;
       constructor Create;
       destructor  Destroy; override;
       procedure LoadFromFile(FileName: String);
@@ -88,6 +93,7 @@ begin
   line := 0;
   while line < Self.InputFile.Count-1 do
   begin
+    Self.ParsingLine:=line;
     if reContentParser.Exec(InputFile.Strings[line]) then
     begin
       KeyValue := reContentParser.Match[1];
@@ -113,29 +119,75 @@ var
   ContentAddressParts: array of String;
   rePartParser: TRegExpr;
   SongPart: TCantaraSongPartHeader;
+  SongContent: TCantaraSongContentHeader;
+  ContentHeaderName: String;
+  PartIndex, ContentIndex: Integer;
+  i: Integer;
 begin
   rePartParser := TRegExpr.Create(PartAddressRegex);
-  ContentAddressParts := ContentAddress.Split('.');
+  ContentAddressParts := LowerCase(ContentAddress).Split('.');
+
+  // TODO: Catch error if less then two parts (no content specified)
 
   if rePartParser.Exec(ContentAddressParts[0]) then
   begin
     SongPart.SongPartName:=ContentAddressParts[0];
-    SongPart.Number:=StrToInt(rePartParser.Match[2]);
     case LowerCase(rePartParser.Match[1]) of
       'refrain': SongPart.SongPartType:= TCantaraSongPartType.sptChorus;
       'chorus' : SongPart.SongPartType:= TCantaraSongPartType.sptChorus;
       'verse'  : SongPart.SongPartType:= TCantaraSongPartType.sptVerse;
       'bridge' : SongPart.SongPartType:= TCantaraSongPartType.sptBridge;
     end;
+
+    if rePartParser.Match[2] = '' then
+    begin
+      // TODO: ggf. Konzept überdenken
+      //SongPart.Number := Self.FindHighestNumerForPartType(SongPart.SongPartType) + 1;
+      SongPart.Number := 1;
+      SongPart.SongPartName:=SongPart.SongPartName + IntToStr(SongPart.Number);
+    end
+    else
+      SongPart.Number:=StrToInt(rePartParser.Match[2]);
+  end;
+  rePartParser.Destroy;
+
+  PartIndex := Self.FindPartIndex(SongPart);
+  if PartIndex = -1 then
+  begin
+    SetLength(SongPartArray, Length(SongPartArray)+1);
+    SongPartArray[Length(SongPartArray)-1] := SongPart;
+    PartIndex := Length(SongPartArray)-1;
+    WriteLn('SongPart: ', SongPart.SongPartName, ' ', SongPart.Number);
   end;
 
-  SongPart.IsRepitition:= (Self.FindPartIndex(SongPart) > -1);
+  // Now fill the content
+  ContentHeaderName := '';
+  for i := 1 to Length(ContentAddressParts)-1 do
+    ContentHeaderName:=ContentHeaderName+ContentAddressParts[i];
+  SongContent.ContentPartName:=ContentHeaderName;
+  ContentIndex := Self.FindContentIndex(SongContent);
 
-  SetLength(SongPartArray, Length(SongPartArray)+1);
-  SongPartArray[Length(SongPartArray)-1] := SongPart;
-  WriteLn('SongPart: ', SongPart.SongPartName);
+  If ContentIndex = -1 then
+  begin
+    SetLength(SongContentArray, Length(SongContentArray)+1);
+    SongContentArray[Length(SongContentArray)-1].ContentPartName:=ContentHeaderName;
+    { Detect and set ContentType }
+    if pos('lyrics', ContentAddressParts[1]) > 0 then
+      SongContentArray[Length(SongContentArray)-1].ContentType:=sctLyrics
+    else if pos('score', ContentAddressParts[1]) > 0 then
+      SongContentArray[Length(SongContentArray)-1].ContentType:=sctScore
+    else if pos('chords', ContentAddressParts[1]) > 0 then
+      SongContentArray[Length(SongContentArray)-1].ContentType:=sctChords;
+    ContentIndex := Length(SongContentArray)-1;
+  end;
 
-  rePartParser.Destroy;
+  SetLength(
+            Self.PartContentMatrix,
+            Length(Self.SongPartArray),
+            Length(Self.SongContentArray)
+            );
+  Self.PartContentMatrix[PartIndex][ContentIndex] := Content;
+
 end;
 
 function TCantaraSongScoreFile.FindPartIndex(ACantaraSongPart: TCantaraSongPartHeader): Integer;
@@ -151,6 +203,34 @@ begin
   end;
 
   Result := -1;
+end;
+
+function TCantaraSongScoreFile.FindContentIndex(
+  AContentHeader: TCantaraSongContentHeader): Integer;
+var i: Integer;
+  CantaraSongContentHeader: TCantaraSongContentHeader;
+begin
+  for i := 0 to Length(Self.SongContentArray)-1 do
+  begin
+    CantaraSongContentHeader := Self.SongContentArray[i];
+    if CantaraSongContentHeader.ContentPartName = AContentHeader.ContentPartName then
+       Exit(i);
+  end;
+
+  Result := -1;
+end;
+
+function TCantaraSongScoreFile.FindHighestNumerForPartType(
+  ASongPartType: TCantaraSongPartType): Integer;
+var i: Integer;
+begin
+  Result := 0;
+  for i := 0 to length(SongPartArray)-1 do
+  begin
+    if ((SongPartArray[i].SongPartType = ASongPartType) and
+       (SongPartArray[i].Number > Result))
+    then Result := SongPartArray[i].Number;
+  end;
 end;
 
 constructor TCantaraSongScoreFile.Create;
