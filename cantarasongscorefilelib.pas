@@ -13,8 +13,18 @@ type
 
   TCantaraSongScoreFileImportErrorType = (etSyntax, etIncomplete, etDouble);
 
+  { The TSongStructureType describes the structure of a song.
+    - ssVerseRefrainBridgeRefrain: applies for any song which starts with a verse. If a refrain is available,
+    the latest refrain will follow after every verse. If a bridge is available, the bridge will be included after the last refrain followed by the refrain as well.
+    - similar to ssVerseRefrainBridgeRefrain, but a refrain is inserted before the first song.
+    - ssCustom: a custom song structure which is not automatically generated and defined elsewhere in the song file.
+  }
+  TSongStructureType = (ssVerseRefrainBridgeRefrain,
+                 ssRefrainVerseRefrainBridgeRefrain,
+                 ssCustom);
+
   { A possible Type of a part of a song }
-  TCantaraSongPartType = (sptChorus, sptVerse, sptBridge);
+  TCantaraSongPartType = (sptRefrain, sptStanza, sptBridge);
   TCantaraSongContentType = (sctScore, sctChords, sctLyrics, sctLyricsDescription);
 
   TCantaraSongScoreFileImportError = record
@@ -37,6 +47,12 @@ type
     SongPartType: TCantaraSongPartType;
     IsRepitition: Boolean;
   end;
+  TCantaraSongPartCount = record
+    RefrainCount: Integer;
+    StanzaCount: Integer;
+    BridgeCount: Integer;
+    Total: Integer;
+  end;
 
 
   { TCantaraSongScoreFile }
@@ -46,7 +62,11 @@ type
       InputFile: TStringList;
       Errors: array of TCantaraSongScoreFileImportError;
       ParsingLine: Integer;
+      SongStructureType: TSongStructureType;
+      SongStructures: array of array of TCantaraSongPartHeader;
       procedure ParseInputFile;
+      procedure AutoGenerateSongStructure;
+      function fGetPartCount: TCantaraSongPartCount;
     public
       Properties: TStringStringDictionary;
       SongPartArray: array of TCantaraSongPartHeader;
@@ -59,6 +79,8 @@ type
       constructor Create;
       destructor  Destroy; override;
       procedure LoadFromFile(FileName: String);
+
+      property PartCount: TCantaraSongPartCount read fGetPartCount;
   end;
 
 const
@@ -75,6 +97,7 @@ var
   ContentValue: String;
   KeyValue: String;
   line: Integer;
+  idx: Integer;
 begin
 
   { Parse Properties }
@@ -82,10 +105,20 @@ begin
   if rePropertyParser.Exec(InputFile.Text) then
   begin
     repeat
-      Self.Properties.Add(rePropertyParser.Match[1], Trim(rePropertyParser.Match[2]));
+      Self.Properties.Add(LowerCase(rePropertyParser.Match[1]), Trim(rePropertyParser.Match[2]));
     until not rePropertyParser.ExecNext;
   end;
   rePropertyParser.Destroy;
+
+  { Catch pre-defined song structre }
+  if Self.Properties.Find('structure', idx) = false then
+    Self.SongStructureType:=TSongStructureType.ssVerseRefrainBridgeRefrain
+  else if Self.Properties.KeyData['structure'] = 'verse-refrain' then
+    Self.SongStructureType:=TSongStructureType.ssVerseRefrainBridgeRefrain
+  else if Self.Properties.KeyData['structure'] = 'refrain-verse' then
+    Self.SongStructureType:=TSongStructureType.ssRefrainVerseRefrainBridgeRefrain
+  else
+    Self.SongStructureType:=TSongStructureType.ssCustom;
 
   { Parse Content }
   reContentParser := TRegExpr.Create(REGEX_PARSECONTENTKEY);
@@ -112,6 +145,37 @@ begin
 
 end;
 
+procedure TCantaraSongScoreFile.AutoGenerateSongStructure;
+var
+  EvaluatedPartCount: TCantaraSongPartCount;
+  skipRefrain, skipBridge: boolean;
+begin
+  SetLength(SongStructures, Length(SongStructures)+1);
+  EvaluatedPartCount := Self.PartCount;
+  if EvaluatedPartCount.RefrainCount = 0 then skipRefrain := true;
+  if EvaluatedPartCount.BridgeCount = 0 then skipBridge := true;
+
+  if not skipRefrain and Self.SongStructureType = TSongStructureType.ss;
+end;
+
+
+function TCantaraSongScoreFile.fGetPartCount: TCantaraSongPartCount;
+var i: Integer;
+begin
+  Result.RefrainCount:=0;
+  Result.StanzaCount:=0;
+  Result.BridgeCount:=0;
+  Result.Total:=0;
+
+  for i := 0 to Length(Self.SongPartArray)-1 do
+    case Self.SongPartArray[i].SongPartType of
+      TCantaraSongPartType.sptRefrain : Result.RefrainCount+=1;
+      TCantaraSongPartType.sptStanza  : Result.StanzaCount+=1;
+      TCantaraSongPartType.sptBridge  : Result.BridgeCount+=1;
+    end;
+  Result.Total:=Length(Self.SongPartArray);
+end;
+
 procedure TCantaraSongScoreFile.AddContent(ContentAddress: String; Content: String);
 const
   PartAddressRegex = '(chorus|verse|bridge|refrain)(\d*)';
@@ -133,9 +197,9 @@ begin
   begin
     SongPart.SongPartName:=ContentAddressParts[0];
     case LowerCase(rePartParser.Match[1]) of
-      'refrain': SongPart.SongPartType:= TCantaraSongPartType.sptChorus;
-      'chorus' : SongPart.SongPartType:= TCantaraSongPartType.sptChorus;
-      'verse'  : SongPart.SongPartType:= TCantaraSongPartType.sptVerse;
+      'refrain': SongPart.SongPartType:= TCantaraSongPartType.sptRefrain;
+      'chorus' : SongPart.SongPartType:= TCantaraSongPartType.sptRefrain;
+      'verse'  : SongPart.SongPartType:= TCantaraSongPartType.sptStanza;
       'bridge' : SongPart.SongPartType:= TCantaraSongPartType.sptBridge;
     end;
 
@@ -177,15 +241,17 @@ begin
     else if pos('score', ContentAddressParts[1]) > 0 then
       SongContentArray[Length(SongContentArray)-1].ContentType:=sctScore
     else if pos('chords', ContentAddressParts[1]) > 0 then
-      SongContentArray[Length(SongContentArray)-1].ContentType:=sctChords;
+      SongContentArray[Length(SongContentArray)-1].ContentType:=sctChords
+    else if pos('description', ContentAddressParts[1]) > 0 then
+    SongContentArray[Length(SongContentArray)-1].ContentType:=sctLyricsDescription;
     ContentIndex := Length(SongContentArray)-1;
   end;
 
   SetLength(
-            Self.PartContentMatrix,
-            Length(Self.SongPartArray),
-            Length(Self.SongContentArray)
-            );
+    Self.PartContentMatrix,
+    Length(Self.SongPartArray),
+    Length(Self.SongContentArray)
+  );
   Self.PartContentMatrix[PartIndex][ContentIndex] := Content;
 
 end;
@@ -238,6 +304,7 @@ begin
   InputFile := TStringList.Create;
 
   Self.Properties := TStringStringDictionary.Create;
+  Self.Properties.Sorted:=True;
 end;
 
 destructor TCantaraSongScoreFile.Destroy;

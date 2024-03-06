@@ -35,6 +35,10 @@ begin
     'Property lang not correct. It is: ' + CantaraSongScoreFile.Properties.KeyData['lang'],
        CantaraSongScoreFile.Properties.KeyData['lang'] = 'de'
     );
+  AssertTrue(
+    'RefrainCount not correct. It is: ' + IntToStr(CantaraSongScoreFile.PartCount.RefrainCount),
+       CantaraSongScoreFile.PartCount.RefrainCount = 1
+    );
   WriteLn(CantaraSongScoreFile.SongPartArray[0].SongPartName, CantaraSongScoreFile.SongContentArray[0].ContentPartName);
   WriteLn(CantaraSongScoreFile.PartContentMatrix[0][0]);
   WriteLn(CantaraSongScoreFile.PartContentMatrix[1][0]);
